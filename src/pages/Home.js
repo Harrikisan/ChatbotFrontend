@@ -1,41 +1,60 @@
 // javascript
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import PersonaSelector from "../components/PersonaSelector";
 import UploadButton from "../components/UploadButton";
 import ChatWindow from "../components/ChatWindow";
 import SearchBar from "../components/SearchBar";
 import { sendMessage, uploadFile, listFiles } from "../services/api";
 import "../App.css";
-
+ 
 const BASE_URL = process.env.REACT_APP_API_BASE || "http://localhost:8000";
-
+ 
 function Home() {
   const [mode, setMode] = useState("chat"); // chat or documents
   const [role, setRole] = useState("HR");
   const roles = ["HR", "Legal", "L1", "L2"];
-
+ 
   // Chat state
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-
+ 
   // Document state
   const [documents, setDocuments] = useState([]);
-  const [previewFile, setPreviewFile] = useState(null); // for image/pdf (URL)
-  const [previewText, setPreviewText] = useState(""); // for .txt or processed PDF
-  const [processing, setProcessing] = useState(false); // PDF processing
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewText, setPreviewText] = useState("");
+  const [processing, setProcessing] = useState(false);
   const [docsLoading, setDocsLoading] = useState(false);
-
-  // Lightweight non-blocking notification (used for success messages)
+ 
+  // Notification
   const [notification, setNotification] = useState("");
-
+ 
+  // -----------------------
+  // Memoized fetchDocuments function
+  // -----------------------
+  const fetchDocuments = useCallback(async () => {
+    setDocsLoading(true);
+    try {
+      const files = await listFiles(role);
+      setDocuments(Array.isArray(files) ? files : []);
+    } catch (err) {
+      console.error("Failed to list files:", err);
+      setDocuments([]);
+    } finally {
+      setDocsLoading(false);
+    }
+  }, [role]); // Only recreate when role changes
+ 
+  // -----------------------
+  // Fetch documents when mode or role changes
+  // -----------------------
   useEffect(() => {
     if (mode === "documents") {
       fetchDocuments();
     }
-  }, [role, mode]);
-
-  // Lock background scroll while preview modal is open
+  }, [role, mode, fetchDocuments]);
+ 
+  // Lock background scroll while modal is open
   const modalOpen = Boolean(previewFile || previewText || processing);
   useEffect(() => {
     if (modalOpen) {
@@ -47,28 +66,17 @@ function Home() {
       document.body.style.overflow = "";
     };
   }, [modalOpen]);
-
-  // Auto clear notification after short time
+ 
+  // Auto clear notifications
   useEffect(() => {
     if (!notification) return;
     const t = setTimeout(() => setNotification(""), 3000);
     return () => clearTimeout(t);
   }, [notification]);
-
-  const fetchDocuments = async () => {
-    setDocsLoading(true);
-    try {
-      const files = await listFiles(role);
-      setDocuments(Array.isArray(files) ? files : []);
-    } catch (err) {
-      console.error("Failed to list files:", err);
-      setDocuments([]);
-      // no blocking alert shown
-    } finally {
-      setDocsLoading(false);
-    }
-  };
-
+ 
+  // -----------------------
+  // Handle Chat Message
+  // -----------------------
   const handleSend = async () => {
     const trimmed = input?.trim();
     if (!trimmed || sending) return;
@@ -86,27 +94,30 @@ function Home() {
       setSending(false);
     }
   };
-
+ 
+  // -----------------------
+  // Handle File Upload
+  // -----------------------
   const handleUpload = async (file) => {
     if (!file) return;
     try {
       const res = await uploadFile(file, role);
-      // show gentle notification only on success (no blocking alerts)
       if (res?.message) setNotification(res.message);
       else setNotification("File uploaded");
-      if (mode === "documents") fetchDocuments(); // refresh
+      if (mode === "documents") fetchDocuments();
     } catch (err) {
       console.error("uploadFile error:", err);
-      // no blocking alert; if you want, set a gentle notification here
-      // setNotification("Upload failed");
     }
   };
-
+ 
+  // -----------------------
+  // Handle File Preview
+  // -----------------------
   const handlePreview = async (filename) => {
     if (!filename) return;
     const encoded = encodeURIComponent(filename);
     const url = `${BASE_URL}/download/${role}/${encoded}`;
-
+ 
     if (filename.toLowerCase().endsWith(".txt")) {
       try {
         setProcessing(true);
@@ -118,13 +129,11 @@ function Home() {
         console.error("Failed to fetch .txt:", err);
         setPreviewText("");
         setPreviewFile(null);
-        // no blocking alert shown
       } finally {
         setProcessing(false);
       }
     } else if (filename.toLowerCase().endsWith(".pdf")) {
       setProcessing(true);
-      // show the PDF itself and fetch extracted text for convenience
       setPreviewFile(url);
       setPreviewText("");
       try {
@@ -134,7 +143,6 @@ function Home() {
         setPreviewText(data?.text ?? "");
       } catch (err) {
         console.error("Error processing PDF:", err);
-        // no blocking alert shown
       } finally {
         setProcessing(false);
       }
@@ -143,11 +151,14 @@ function Home() {
       setPreviewText("");
     }
   };
-
+ 
+  // -----------------------
+  // UI Rendering
+  // -----------------------
   return (
     <div className="home-container">
       <h2>LangChain + Groq Persona Portal</h2>
-
+ 
       <div className="mode-toggle">
         <button
           type="button"
@@ -164,12 +175,12 @@ function Home() {
           Documents
         </button>
       </div>
-
+ 
       <div className="controls">
         <PersonaSelector roles={roles} selectedRole={role} onChange={setRole} />
         <UploadButton onUpload={handleUpload} />
       </div>
-
+ 
       {mode === "chat" ? (
         <>
           <ChatWindow messages={messages} />
@@ -202,7 +213,7 @@ function Home() {
           )}
         </div>
       )}
-
+ 
       {(previewFile || previewText || processing) && (
         <div
           className="preview-modal"
@@ -216,7 +227,7 @@ function Home() {
             onClick={(e) => e.stopPropagation()}
           >
             {processing && <p>Processing... Please wait.</p>}
-
+ 
             {previewFile && previewFile.toLowerCase().endsWith(".pdf") && (
               <embed
                 src={previewFile}
@@ -225,7 +236,7 @@ function Home() {
                 height="600px"
               />
             )}
-
+ 
             {previewFile && !previewFile.toLowerCase().endsWith(".pdf") && (
               <img
                 src={previewFile}
@@ -233,7 +244,7 @@ function Home() {
                 style={{ maxWidth: "100%", maxHeight: "72vh" }}
               />
             )}
-
+ 
             {previewText && (
               <textarea
                 value={previewText}
@@ -241,7 +252,7 @@ function Home() {
                 style={{ width: "100%", height: "400px", resize: "vertical" }}
               />
             )}
-
+ 
             <button
               type="button"
               onClick={() => {
@@ -255,15 +266,15 @@ function Home() {
           </div>
         </div>
       )}
-
-      {/* non-blocking notification */}
+ 
       {notification && (
         <div
           style={{
             position: "fixed",
             right: 20,
             top: 20,
-            background: "linear-gradient(135deg, rgba(122,162,255,0.12), rgba(110,231,183,0.06))",
+            background:
+              "linear-gradient(135deg, rgba(122,162,255,0.12), rgba(110,231,183,0.06))",
             color: "#041026",
             padding: "10px 14px",
             borderRadius: 10,
@@ -277,5 +288,5 @@ function Home() {
     </div>
   );
 }
-
+ 
 export default Home;
